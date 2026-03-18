@@ -1,18 +1,42 @@
 /* ═══════════════════════════════════════════
-   NEXUS CHAT — app.js  (CSS-aligned)
+   NEXUS CHAT — app.js
    ═══════════════════════════════════════════ */
 
 const SUPABASE_URL = '';
 const SUPABASE_KEY = '';
 
-const CFG_KEY = 'nx_cfg_v3';
+const CFG_KEY      = 'nx_cfg_v3';
+const SETTINGS_KEY = 'nx_settings_v1';
 const COLORS  = ['#5c6cf5','#34d399','#f97316','#ec4899','#0ea5e9','#a855f7','#ef4444','#eab308'];
 const EMOJIS  = ['😊','😂','❤️','👍','🎉','🔥','✨','😎','🤔','👋','🙏','😅','💯','🚀','😍','🥳','😇','🤩','💪','🎯','👌','🤝','💬','⚡','🌟','🎊','🙌','💡','📌','🎯'];
+const ACCENT_COLORS = [
+  {name:'Discord',  value:'#5865f2'},
+  {name:'Purple',   value:'#a855f7'},
+  {name:'Pink',     value:'#ec4899'},
+  {name:'Green',    value:'#23a55a'},
+  {name:'WA Green', value:'#00a884'},
+  {name:'Sky',      value:'#0ea5e9'},
+  {name:'Orange',   value:'#f97316'},
+  {name:'Red',      value:'#ef4444'},
+];
 
 let SB = null, ME = null, CHAT = null, TAB = 'chats', Q = '', realtimeSub = null;
 let friends = [], requests = [], messages = {};
 
-/* ── Utilities ─────────────────────────────── */
+/* Settings state */
+let SETTINGS = {
+  theme: 'dark',
+  accent: '#5865f2',
+  micId: '',
+  speakerId: '',
+  notifSound: true,
+};
+
+/* Voice recording state */
+let mediaRecorder = null, audioChunks = [], recInterval = null, recSeconds = 0;
+let currentAudio = null;
+
+/* ── Utilities ── */
 const clr = u => COLORS[u.split('').reduce((a,c)=>a+c.charCodeAt(0),0) % COLORS.length];
 const ini  = n => n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
 const ava  = (name, sz='') => `<div class="ava${sz?' '+sz:''}" style="background:${clr(name)}">${ini(name)}</div>`;
@@ -35,6 +59,10 @@ function fmtDate(ts) {
   if (d.toDateString()===y.toDateString()) return 'Yesterday';
   return d.toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
 }
+function fmtDuration(secs) {
+  const m=Math.floor(secs/60), s=secs%60;
+  return `${m}:${String(s).padStart(2,'0')}`;
+}
 
 function toast(msg, icon='✅') {
   const el=document.createElement('div');
@@ -43,9 +71,9 @@ function toast(msg, icon='✅') {
   document.body.appendChild(el);
   setTimeout(()=>{
     el.style.transition='opacity .25s,transform .25s';
-    el.style.opacity='0'; el.style.transform='translateY(14px)';
+    el.style.opacity='0'; el.style.transform='translateY(12px)';
     setTimeout(()=>el.remove(), 260);
-  }, 2600);
+  }, 2800);
 }
 
 async function hashPwd(p) {
@@ -53,7 +81,34 @@ async function hashPwd(p) {
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-/* ── Setup SQL ─────────────────────────────── */
+/* ── Settings persistence ── */
+function loadSettings() {
+  const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY)||'null');
+  if (saved) SETTINGS = {...SETTINGS,...saved};
+  applySettings();
+}
+function saveSettings() {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS));
+  applySettings();
+}
+function applySettings() {
+  document.documentElement.dataset.theme = SETTINGS.theme;
+  document.documentElement.style.setProperty('--accent', SETTINGS.accent);
+  document.documentElement.style.setProperty('--accent-h', adjustColor(SETTINGS.accent, -20));
+  document.documentElement.style.setProperty('--accent-lo', hexToRgba(SETTINGS.accent, .18));
+}
+function hexToRgba(hex, alpha) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+function adjustColor(hex, amount) {
+  const r=Math.max(0,Math.min(255,parseInt(hex.slice(1,3),16)+amount));
+  const g=Math.max(0,Math.min(255,parseInt(hex.slice(3,5),16)+amount));
+  const b=Math.max(0,Math.min(255,parseInt(hex.slice(5,7),16)+amount));
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+}
+
+/* ── Setup SQL ── */
 const SETUP_SQL = `-- Run this ONCE in Supabase SQL Editor
 
 drop table if exists messages;
@@ -120,21 +175,16 @@ function showSetup() {
       </div>
     </div>
   </div>`);
-
-  $('sql-toggle').onclick = () => {
-    const a=$('sql-area');
-    a.style.display = a.style.display==='none' ? 'block' : 'none';
-  };
-  $('copy-sql').onclick = () =>
-    navigator.clipboard.writeText(SETUP_SQL).then(()=>toast('SQL copied!','📋'));
+  $('sql-toggle').onclick = () => { const a=$('sql-area'); a.style.display=a.style.display==='none'?'block':'none'; };
+  $('copy-sql').onclick = ()=>navigator.clipboard.writeText(SETUP_SQL).then(()=>toast('SQL copied!','📋'));
   $('btn-setup').onclick = doSetup;
-  ['s-url','s-key'].forEach(id => $(id)?.addEventListener('keydown', e=>{ if(e.key==='Enter') doSetup(); }));
+  ['s-url','s-key'].forEach(id=>$(id)?.addEventListener('keydown',e=>{if(e.key==='Enter')doSetup();}));
 }
 
 async function doSetup() {
-  const url = $('s-url').value.trim().replace(/\/$/,'');
-  const key = $('s-key').value.trim();
-  const msgEl = $('setup-msg');
+  const url=$('s-url').value.trim().replace(/\/$/,'');
+  const key=$('s-key').value.trim();
+  const msgEl=$('setup-msg');
   if (!url||!key) { msgEl.innerHTML='<div class="alert err">Please fill in both fields</div>'; return; }
   if (!url.startsWith('https://')) { msgEl.innerHTML='<div class="alert err">URL must start with https://</div>'; return; }
   const btn=$('btn-setup'); btn.disabled=true; btn.textContent='Testing...';
@@ -142,9 +192,8 @@ async function doSetup() {
     const client=supabase.createClient(url,key);
     const {error}=await client.from('profiles').select('id').limit(1);
     if (error) throw new Error(error.message);
-    localStorage.setItem(CFG_KEY, JSON.stringify({url,key}));
-    SB=client;
-    btn.textContent='✅ Connected!';
+    localStorage.setItem(CFG_KEY,JSON.stringify({url,key}));
+    SB=client; btn.textContent='✅ Connected!';
     toast('Connected! Redirecting…','✅');
     setTimeout(()=>showAuth(), 900);
   } catch(e) {
@@ -165,7 +214,7 @@ function showAuth(mode='login') {
         </div>
         <span>Nexus</span>
       </div>
-      <div id="auth-body">${mode==='login' ? loginForm() : signupForm()}</div>
+      <div id="auth-body">${mode==='login'?loginForm():signupForm()}</div>
     </div>
   </div>`);
   bindAuth();
@@ -192,24 +241,18 @@ function signupForm() {
     <p class="auth-switch">Have an account? <a id="sw">Sign in</a></p>`;
 }
 
-function amsg(html, cls) {
-  const el=$('amsg');
-  if (el) el.innerHTML=`<div class="alert ${cls}">${html}</div>`;
-}
+function amsg(html, cls) { const el=$('amsg'); if(el) el.innerHTML=`<div class="alert ${cls}">${html}</div>`; }
 
 function bindAuth() {
-  const isLogin = !$('ain-n');
-  $('sw')?.addEventListener('click', ()=>showAuth(isLogin?'signup':'login'));
-  $('btn-auth')?.addEventListener('click', isLogin?doLogin:doSignup);
-  ['ain-u','ain-p','ain-n'].forEach(id=>$(id)?.addEventListener('keydown', e=>{
-    if(e.key==='Enter'){isLogin?doLogin():doSignup();}
-  }));
+  const isLogin=!$('ain-n');
+  $('sw')?.addEventListener('click',()=>showAuth(isLogin?'signup':'login'));
+  $('btn-auth')?.addEventListener('click',isLogin?doLogin:doSignup);
+  ['ain-u','ain-p','ain-n'].forEach(id=>$(id)?.addEventListener('keydown',e=>{if(e.key==='Enter'){isLogin?doLogin():doSignup();}}));
   $('ain-u')?.focus();
 }
 
 async function doLogin() {
-  const u=$('ain-u')?.value.trim().toLowerCase();
-  const p=$('ain-p')?.value;
+  const u=$('ain-u')?.value.trim().toLowerCase(), p=$('ain-p')?.value;
   if (!u||!p) { amsg('Please fill in both fields','err'); return; }
   const btn=$('btn-auth'); btn.disabled=true; btn.textContent='Signing in...';
   const {data,error}=await SB.from('profiles').select('*').eq('username',u).single();
@@ -220,9 +263,7 @@ async function doLogin() {
 }
 
 async function doSignup() {
-  const n=$('ain-n')?.value.trim();
-  const u=$('ain-u')?.value.trim().toLowerCase();
-  const p=$('ain-p')?.value;
+  const n=$('ain-n')?.value.trim(), u=$('ain-u')?.value.trim().toLowerCase(), p=$('ain-p')?.value;
   if (!n||!u||!p) { amsg('Please fill in all fields','err'); return; }
   if (p.length<6) { amsg('Password needs at least 6 characters','err'); return; }
   if (!/^[a-z0-9_]+$/.test(u)) { amsg('Username: only letters, numbers, underscores','err'); return; }
@@ -279,10 +320,10 @@ async function loadMessages(fr) {
 function subscribeRealtime() {
   if (realtimeSub) SB.removeChannel(realtimeSub);
   realtimeSub = SB.channel('nx-'+ME.username)
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'}, p=>{
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},p=>{
       const msg=p.new, u=ME.username;
-      if (msg.from_user!==u && msg.to_user!==u) return;
-      const other=msg.from_user===u ? msg.to_user : msg.from_user;
+      if (msg.from_user!==u&&msg.to_user!==u) return;
+      const other=msg.from_user===u?msg.to_user:msg.from_user;
       if (!messages[other]) messages[other]=[];
       if (!messages[other].find(m=>m.id===msg.id)) messages[other].push(msg);
       if (CHAT===other) {
@@ -293,10 +334,10 @@ function subscribeRealtime() {
         if (msg.from_user!==u) toast(`New message from @${msg.from_user}`,'💬');
       }
     })
-    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'friendships'}, p=>{
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'friendships'},p=>{
       if (p.new.status==='accepted') { loadData().then(()=>renderApp()); toast('Friend request accepted! 🎉','🎉'); }
     })
-    .on('postgres_changes',{event:'INSERT',schema:'public',table:'friendships'}, p=>{
+    .on('postgres_changes',{event:'INSERT',schema:'public',table:'friendships'},p=>{
       if (p.new.to_user===ME.username) { loadData().then(()=>renderApp()); toast(`Friend request from @${p.new.from_user}`,'👋'); }
     })
     .subscribe();
@@ -306,7 +347,7 @@ function subscribeRealtime() {
    RENDER
 ════════════════════════════════════════════ */
 function renderApp() {
-  setHTML(`<div class="shell">${renderSidebar()}${CHAT ? renderChatPanel() : renderEmptyPanel()}</div>`);
+  setHTML(`<div class="shell">${renderSidebar()}${CHAT?renderChatPanel():renderEmptyPanel()}</div>`);
   bindApp();
 }
 
@@ -331,9 +372,10 @@ function renderSidebar() {
         <button class="tab ${TAB==='friends'?'on':''}" id="t-friends">
           👥 Friends ${inc.length>0?`<span class="chip">${inc.length}</span>`:''}
         </button>
+        <button class="tab ${TAB==='settings'?'on':''}" id="t-settings">⚙️</button>
       </div>
     </div>
-    ${TAB==='chats' ? renderConvPanel() : renderFrPanel()}
+    ${TAB==='chats'?renderConvPanel():TAB==='friends'?renderFrPanel():renderSettingsPanel()}
   </div>`;
 }
 
@@ -349,11 +391,13 @@ function renderConvPanel() {
         : fil.map(f=>{
             const msgs=messages[f.username]||[], last=msgs[msgs.length-1];
             const unr=msgs.filter(m=>m.from_user!==ME.username&&!m.read).length;
+            const isVoice=last?.content?.startsWith('[voice]');
+            const lastPreview=last?(last.from_user===ME.username?'You: ':'')+(isVoice?'🎤 Voice message':esc(last.content)):'Start chatting…';
             return `<div class="conv-item ${CHAT===f.username?'active':''}" data-fr="${f.username}">
               ${ava(f.display_name,'sm')}
               <div class="conv-body">
                 <div class="conv-name">${esc(f.display_name)}</div>
-                <div class="conv-last">${last?(last.from_user===ME.username?'You: ':'')+esc(last.content):'Start chatting…'}</div>
+                <div class="conv-last">${lastPreview}</div>
               </div>
               <div class="conv-meta">
                 ${last?`<span class="conv-time">${fmtShort(last.created_at)}</span>`:''}
@@ -372,10 +416,7 @@ function renderFrPanel() {
     ${inc.length?`<div class="sec-lbl">Incoming (${inc.length})</div>
       ${inc.map(r=>`<div class="fr-row">
         ${ava(r.from_user,'sm')}
-        <div class="fr-info">
-          <div class="fr-name">@${r.from_user}</div>
-          <div class="fr-sub">wants to be friends</div>
-        </div>
+        <div class="fr-info"><div class="fr-name">@${r.from_user}</div><div class="fr-sub">wants to be friends</div></div>
         <span class="tag in">Incoming</span>
         <div class="fr-acts">
           <button class="act-btn ok" data-accept="${r.from_user}" title="Accept">✓</button>
@@ -385,10 +426,7 @@ function renderFrPanel() {
     ${out.length?`<div class="sec-lbl">Sent</div>
       ${out.map(r=>`<div class="fr-row">
         ${ava(r.to_user,'sm')}
-        <div class="fr-info">
-          <div class="fr-name">@${r.to_user}</div>
-          <div class="fr-sub">waiting…</div>
-        </div>
+        <div class="fr-info"><div class="fr-name">@${r.to_user}</div><div class="fr-sub">waiting…</div></div>
         <span class="tag out">Pending</span>
       </div>`).join('')}`:''}
     ${friends.length?`<div class="sec-lbl">Friends (${friends.length})</div>
@@ -403,6 +441,83 @@ function renderFrPanel() {
         </div>
       </div>`).join('')}`
     :`<div class="empty-state">No friends yet!<br>Use the button above to add someone.</div>`}
+  </div>`;
+}
+
+/* ── Settings Panel ── */
+function renderSettingsPanel() {
+  const swatches = ACCENT_COLORS.map(c=>
+    `<div class="swatch${SETTINGS.accent===c.value?' active':''}" data-color="${c.value}" title="${c.name}" style="background:${c.value}"></div>`
+  ).join('');
+
+  return `<div class="settings-panel" id="settings-panel">
+
+    <div class="set-section">
+      <div class="set-section-title">Appearance</div>
+
+      <div class="set-row">
+        <div>
+          <div class="set-row-label">Theme</div>
+          <div class="set-row-sub">Choose your colour mode</div>
+        </div>
+        <div class="set-row-right">
+          <select class="set-select" id="set-theme">
+            <option value="dark" ${SETTINGS.theme==='dark'?'selected':''}>🌙 Dark</option>
+            <option value="light" ${SETTINGS.theme==='light'?'selected':''}>☀️ Light</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="set-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+        <div class="set-row-label">Accent Colour</div>
+        <div class="color-swatches" id="color-swatches">${swatches}</div>
+      </div>
+    </div>
+
+    <div class="set-section">
+      <div class="set-section-title">Audio Devices</div>
+
+      <div class="set-row">
+        <div>
+          <div class="set-row-label">🎤 Microphone</div>
+          <div class="set-row-sub">Input device for voice messages</div>
+        </div>
+        <div class="set-row-right">
+          <select class="set-select" id="set-mic" style="max-width:140px">
+            <option value="">Default</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="set-row">
+        <div>
+          <div class="set-row-label">🔊 Speaker</div>
+          <div class="set-row-sub">Output device for audio</div>
+        </div>
+        <div class="set-row-right">
+          <select class="set-select" id="set-speaker" style="max-width:140px">
+            <option value="">Default</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="set-section">
+      <div class="set-section-title">Notifications</div>
+      <div class="set-row">
+        <div>
+          <div class="set-row-label">Sound Alerts</div>
+          <div class="set-row-sub">Play a sound for new messages</div>
+        </div>
+        <div class="set-row-right">
+          <label class="toggle">
+            <input type="checkbox" id="set-notif" ${SETTINGS.notifSound?'checked':''}>
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
   </div>`;
 }
 
@@ -436,11 +551,12 @@ function renderChatPanel() {
     </div>
     <div class="msgs" id="msgs">${renderMsgList(messages[CHAT]||[])}</div>
     <div class="input-zone">
-      <div class="input-box">
+      <div class="input-box" id="input-box">
         <button class="ia-btn" title="Attach">📎</button>
         <textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea>
         <div class="ia">
           <button class="ia-btn" id="emoji-btn" title="Emoji">😊</button>
+          <button class="voice-rec-btn" id="voice-btn" title="Hold to record voice message">🎤</button>
           <button class="send-btn" id="send-btn" title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
               <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -453,9 +569,9 @@ function renderChatPanel() {
 }
 
 function renderMsgList(msgs) {
-  if (!msgs.length) return `<div style="text-align:center;color:var(--t3);font-size:13px;padding:40px 0">No messages yet — say hello 👋</div>`;
+  if (!msgs.length) return `<div style="text-align:center;color:var(--t3);font-size:13px;padding:48px 0">No messages yet — say hello 👋</div>`;
   let html='', lastDate='';
-  for (let i=0; i<msgs.length; i++) {
+  for (let i=0;i<msgs.length;i++) {
     const m=msgs[i], isOut=m.from_user===ME.username;
     const d=new Date(m.created_at).toDateString();
     if (d!==lastDate) { html+=`<div class="date-sep">${fmtDate(m.created_at)}</div>`; lastDate=d; }
@@ -463,12 +579,14 @@ function renderMsgList(msgs) {
     const showLbl=!isOut&&(i===0||msgs[i-1]?.from_user===ME.username);
     const fr=friends.find(f=>f.username===m.from_user);
     const name=fr?fr.display_name:m.from_user;
+    const isVoice=m.content.startsWith('[voice]');
+    const bubbleContent=isVoice?renderVoiceBubble(m.content,m.id):esc(m.content);
     html+=`<div class="msg-row${isOut?' out':''}">
       ${!isOut?(showAva?ava(name,'sm'):`<div class="msg-ava-spacer"></div>`):''}
       <div>
         ${showLbl&&!isOut?`<div class="sender-lbl">${esc(name)}</div>`:''}
         <div class="bubble ${isOut?'out':'in'}">
-          ${esc(m.content)}
+          ${bubbleContent}
           <div class="msg-time">
             ${fmtTime(m.created_at)}
             ${isOut?`<span class="ticks${m.read?' read':''}">✓✓</span>`:''}
@@ -478,6 +596,18 @@ function renderMsgList(msgs) {
     </div>`;
   }
   return html;
+}
+
+function renderVoiceBubble(content, id) {
+  const b64=content.slice('[voice]'.length);
+  const safeId='vp-'+id.replace(/-/g,'');
+  return `<div class="voice-msg">
+    <button class="voice-play-btn" id="${safeId}" data-src="${b64}" onclick="playVoice('${safeId}')">▶</button>
+    <div class="voice-waveform">
+      ${Array.from({length:8},(_,i)=>`<div class="voice-bar paused" id="${safeId}-bar${i}"></div>`).join('')}
+    </div>
+    <span class="voice-duration" id="${safeId}-dur">0:00</span>
+  </div>`;
 }
 
 /* ── Refresh helpers ── */
@@ -494,6 +624,151 @@ function refreshConvList() {
   tmp.innerHTML=renderConvPanel();
   const nl=tmp.querySelector('#conv-list');
   if (nl) { cl.innerHTML=nl.innerHTML; bindConvItems(); }
+}
+
+/* ════════════════════════════════════════════
+   VOICE MESSAGES
+════════════════════════════════════════════ */
+async function startRecording() {
+  try {
+    const constraints = {audio: SETTINGS.micId ? {deviceId:{exact:SETTINGS.micId}} : true};
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    audioChunks = []; recSeconds = 0;
+    mediaRecorder = new MediaRecorder(stream, {mimeType: getSupportedMimeType()});
+    mediaRecorder.ondataavailable = e => { if (e.data.size>0) audioChunks.push(e.data); };
+    mediaRecorder.start(100);
+
+    /* Show recording UI */
+    const inputBox = $('input-box');
+    if (inputBox) {
+      inputBox.innerHTML = `
+        <div class="recording-indicator">
+          <div class="rec-dot"></div>
+          <span class="rec-timer" id="rec-timer">0:00</span>
+          <span style="flex:1;font-size:12px;color:var(--t3)">Recording…</span>
+          <button class="rec-cancel" id="rec-cancel">Cancel</button>
+        </div>
+        <button class="voice-rec-btn recording" id="voice-btn" title="Stop recording">⏹</button>
+      `;
+      $('rec-cancel').onclick = cancelRecording;
+      $('voice-btn').onclick  = stopRecording;
+    }
+
+    recInterval = setInterval(()=>{
+      recSeconds++;
+      const t=$('rec-timer');
+      if (t) t.textContent=fmtDuration(recSeconds);
+      if (recSeconds >= 120) stopRecording();
+    }, 1000);
+
+  } catch(err) {
+    toast('Microphone access denied','🚫');
+  }
+}
+
+function getSupportedMimeType() {
+  const types=['audio/webm;codecs=opus','audio/webm','audio/ogg;codecs=opus','audio/mp4'];
+  return types.find(t=>MediaRecorder.isTypeSupported(t))||'';
+}
+
+function cancelRecording() {
+  clearInterval(recInterval);
+  if (mediaRecorder&&mediaRecorder.state!=='inactive') {
+    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    mediaRecorder.stop();
+  }
+  mediaRecorder=null; audioChunks=[];
+  restoreInputBox();
+}
+
+async function stopRecording() {
+  clearInterval(recInterval);
+  if (!mediaRecorder||audioChunks.length===0) { cancelRecording(); return; }
+
+  await new Promise(resolve=>{
+    mediaRecorder.onstop=resolve;
+    mediaRecorder.stream.getTracks().forEach(t=>t.stop());
+    if (mediaRecorder.state!=='inactive') mediaRecorder.stop();
+  });
+
+  const blob = new Blob(audioChunks, {type: mediaRecorder.mimeType||'audio/webm'});
+  audioChunks = []; mediaRecorder = null;
+
+  /* Convert to base64 */
+  const reader = new FileReader();
+  reader.onloadend = async () => {
+    const b64 = reader.result; /* data:audio/...;base64,... */
+    await sendVoiceMsg(b64);
+  };
+  reader.readAsDataURL(blob);
+  restoreInputBox();
+}
+
+async function sendVoiceMsg(b64) {
+  if (!CHAT) return;
+  const content = '[voice]' + b64;
+  const {data,error} = await SB.from('messages').insert({from_user:ME.username,to_user:CHAT,content,read:false}).select().single();
+  if (!error&&data) {
+    if (!messages[CHAT]) messages[CHAT]=[];
+    messages[CHAT].push(data);
+    refreshMsgs();
+  } else {
+    toast('Failed to send voice message','❌');
+  }
+}
+
+function restoreInputBox() {
+  const fr=friends.find(f=>f.username===CHAT);
+  if (!fr) return;
+  const inputBox=$('input-box');
+  if (!inputBox) return;
+  inputBox.innerHTML=`
+    <button class="ia-btn" title="Attach">📎</button>
+    <textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea>
+    <div class="ia">
+      <button class="ia-btn" id="emoji-btn" title="Emoji">😊</button>
+      <button class="voice-rec-btn" id="voice-btn" title="Hold to record voice message">🎤</button>
+      <button class="send-btn" id="send-btn" title="Send">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>`;
+  bindChatInput();
+}
+
+/* Play voice message */
+function playVoice(safeId) {
+  const btn=document.getElementById(safeId);
+  if (!btn) return;
+  const b64=btn.dataset.src;
+  const bars=Array.from({length:8},(_,i)=>document.getElementById(`${safeId}-bar${i}`));
+  const durEl=document.getElementById(`${safeId}-dur`);
+
+  if (currentAudio&&!currentAudio.paused) {
+    currentAudio.pause();
+    currentAudio=null;
+    bars.forEach(b=>b&&b.classList.add('paused'));
+    btn.textContent='▶';
+    return;
+  }
+
+  const audio=new Audio(b64);
+  currentAudio=audio;
+
+  if (SETTINGS.speakerId && audio.setSinkId) {
+    audio.setSinkId(SETTINGS.speakerId).catch(()=>{});
+  }
+
+  audio.onloadedmetadata=()=>{
+    if (durEl) durEl.textContent=fmtDuration(Math.round(audio.duration));
+  };
+  audio.ontimeupdate=()=>{
+    if (durEl) durEl.textContent=fmtDuration(Math.round(audio.currentTime));
+  };
+  audio.onplay=()=>{ btn.textContent='⏸'; bars.forEach(b=>b&&b.classList.remove('paused')); };
+  audio.onpause=audio.onended=()=>{ btn.textContent='▶'; bars.forEach(b=>b&&b.classList.add('paused')); currentAudio=null; };
+  audio.play().catch(()=>toast('Could not play audio','❌'));
 }
 
 /* ════════════════════════════════════════════
@@ -539,10 +814,10 @@ function openAddFriend() {
   </div>`;
   document.body.appendChild(div);
   $('m-u').focus();
-  $('m-cancel').onclick = ()=>div.remove();
-  div.addEventListener('click', e=>{ if(e.target===div) div.remove(); });
-  $('m-u').addEventListener('keydown', e=>{ if(e.key==='Enter') doSendReq(); });
-  $('m-send').onclick = doSendReq;
+  $('m-cancel').onclick=()=>div.remove();
+  div.addEventListener('click',e=>{if(e.target===div)div.remove();});
+  $('m-u').addEventListener('keydown',e=>{if(e.key==='Enter')doSendReq();});
+  $('m-send').onclick=doSendReq;
 }
 
 async function doSendReq() {
@@ -566,26 +841,82 @@ async function doSendReq() {
 }
 
 /* ════════════════════════════════════════════
+   SETTINGS BINDINGS
+════════════════════════════════════════════ */
+async function loadAudioDevices() {
+  try {
+    await navigator.mediaDevices.getUserMedia({audio:true}).then(s=>s.getTracks().forEach(t=>t.stop()));
+    const devices=await navigator.mediaDevices.enumerateDevices();
+    const mics=devices.filter(d=>d.kind==='audioinput');
+    const speakers=devices.filter(d=>d.kind==='audiooutput');
+    const micSel=$('set-mic'), spkSel=$('set-speaker');
+    if (micSel) {
+      mics.forEach(d=>{
+        const o=document.createElement('option');
+        o.value=d.deviceId; o.textContent=d.label||`Microphone ${mics.indexOf(d)+1}`;
+        if (d.deviceId===SETTINGS.micId) o.selected=true;
+        micSel.appendChild(o);
+      });
+    }
+    if (spkSel) {
+      speakers.forEach(d=>{
+        const o=document.createElement('option');
+        o.value=d.deviceId; o.textContent=d.label||`Speaker ${speakers.indexOf(d)+1}`;
+        if (d.deviceId===SETTINGS.speakerId) o.selected=true;
+        spkSel.appendChild(o);
+      });
+    }
+  } catch(e) {
+    /* silently ignore if no mic permission */
+  }
+}
+
+function bindSettingsPanel() {
+  $('set-theme')?.addEventListener('change',e=>{
+    SETTINGS.theme=e.target.value; saveSettings(); toast('Theme updated','🎨');
+  });
+  $('set-mic')?.addEventListener('change',e=>{
+    SETTINGS.micId=e.target.value; saveSettings(); toast('Microphone updated','🎤');
+  });
+  $('set-speaker')?.addEventListener('change',e=>{
+    SETTINGS.speakerId=e.target.value; saveSettings(); toast('Speaker updated','🔊');
+  });
+  $('set-notif')?.addEventListener('change',e=>{
+    SETTINGS.notifSound=e.target.checked; saveSettings();
+  });
+  document.querySelectorAll('.swatch').forEach(el=>{
+    el.addEventListener('click',()=>{
+      SETTINGS.accent=el.dataset.color; saveSettings();
+      document.querySelectorAll('.swatch').forEach(s=>s.classList.toggle('active',s===el));
+      toast('Accent colour updated','🎨');
+    });
+  });
+  loadAudioDevices();
+}
+
+/* ════════════════════════════════════════════
    BINDINGS
 ════════════════════════════════════════════ */
 function bindApp() {
-  $('btn-logout')?.addEventListener('click', ()=>{
+  $('btn-logout')?.addEventListener('click',()=>{
     ME=null; CHAT=null; TAB='chats'; Q='';
     localStorage.removeItem('nx_session');
     if (realtimeSub) SB.removeChannel(realtimeSub);
     showAuth();
   });
-  $('t-chats')?.addEventListener('click',  ()=>{ TAB='chats';   renderApp(); });
-  $('t-friends')?.addEventListener('click', ()=>{ TAB='friends'; renderApp(); });
-  $('btn-add-fr')?.addEventListener('click', openAddFriend);
-  $('q-in')?.addEventListener('input', e=>{ Q=e.target.value; refreshConvList(); });
+  $('t-chats')?.addEventListener('click',()=>{ TAB='chats'; renderApp(); });
+  $('t-friends')?.addEventListener('click',()=>{ TAB='friends'; renderApp(); });
+  $('t-settings')?.addEventListener('click',()=>{ TAB='settings'; renderApp(); });
+  $('btn-add-fr')?.addEventListener('click',openAddFriend);
+  $('q-in')?.addEventListener('input',e=>{ Q=e.target.value; refreshConvList(); });
   bindConvItems(); bindFriendActions(); bindChatInput();
+  if (TAB==='settings') bindSettingsPanel();
   const area=$('msgs');
   if (area) setTimeout(()=>area.scrollTop=area.scrollHeight, 30);
 }
 
 function bindConvItems() {
-  document.querySelectorAll('.conv-item[data-fr]').forEach(el=>el.addEventListener('click', async()=>{
+  document.querySelectorAll('.conv-item[data-fr]').forEach(el=>el.addEventListener('click',async()=>{
     CHAT=el.dataset.fr; await loadMessages(CHAT); renderApp();
   }));
 }
@@ -593,7 +924,7 @@ function bindConvItems() {
 function bindFriendActions() {
   document.querySelectorAll('[data-accept]').forEach(el=>el.addEventListener('click',()=>acceptFriend(el.dataset.accept)));
   document.querySelectorAll('[data-decline]').forEach(el=>el.addEventListener('click',()=>declineFriend(el.dataset.decline)));
-  document.querySelectorAll('[data-chat]').forEach(el=>el.addEventListener('click', async()=>{
+  document.querySelectorAll('[data-chat]').forEach(el=>el.addEventListener('click',async()=>{
     CHAT=el.dataset.chat; TAB='chats'; await loadMessages(CHAT); renderApp();
   }));
 }
@@ -601,12 +932,32 @@ function bindFriendActions() {
 function bindChatInput() {
   const ta=$('msg-ta');
   if (!ta) return;
-  ta.addEventListener('keydown', e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMsg(); } });
-  ta.addEventListener('input', ()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; });
+  ta.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMsg(); } });
+  ta.addEventListener('input',()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,120)+'px'; });
   ta.focus();
-  $('send-btn')?.addEventListener('click', sendMsg);
+  $('send-btn')?.addEventListener('click',sendMsg);
 
-  $('emoji-btn')?.addEventListener('click', e=>{
+  /* Voice recording button */
+  const vb=$('voice-btn');
+  if (vb) {
+    let pressTimer=null;
+    vb.addEventListener('mousedown', e=>{
+      e.preventDefault();
+      pressTimer=setTimeout(startRecording, 180);
+    });
+    vb.addEventListener('mouseup',()=>{
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer=null; }
+    });
+    vb.addEventListener('click',()=>{
+      if (mediaRecorder&&mediaRecorder.state==='recording') { stopRecording(); }
+      else if (!mediaRecorder) { startRecording(); }
+    });
+    /* Touch support */
+    vb.addEventListener('touchstart',e=>{ e.preventDefault(); startRecording(); },{passive:false});
+    vb.addEventListener('touchend',e=>{ e.preventDefault(); stopRecording(); },{passive:false});
+  }
+
+  $('emoji-btn')?.addEventListener('click',e=>{
     e.stopPropagation();
     document.getElementById('epicker')?.remove();
     const pick=document.createElement('div');
@@ -614,7 +965,7 @@ function bindChatInput() {
     EMOJIS.forEach(em=>{
       const b=document.createElement('button');
       b.className='e-btn'; b.textContent=em;
-      b.addEventListener('click', e2=>{
+      b.addEventListener('click',e2=>{
         e2.stopPropagation();
         const t2=$('msg-ta');
         if (t2) {
@@ -636,6 +987,7 @@ function bindChatInput() {
    BOOT
 ════════════════════════════════════════════ */
 async function boot() {
+  loadSettings();
   let url=SUPABASE_URL.trim(), key=SUPABASE_KEY.trim();
   if (!url||!key) {
     const saved=JSON.parse(localStorage.getItem(CFG_KEY)||'null');
