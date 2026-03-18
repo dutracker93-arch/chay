@@ -176,7 +176,6 @@ function openAvatarEditor() {
 }
 
 function showCropModal(srcUrl) {
-  // Remove any existing crop modal
   document.getElementById('crop-overlay')?.remove();
 
   const div = document.createElement('div');
@@ -189,7 +188,7 @@ function showCropModal(srcUrl) {
     <p class="crop-hint">Drag to reposition · Scroll or pinch to zoom</p>
     <div class="crop-zoom-row">
       <span style="font-size:13px">🔍</span>
-      <input type="range" id="crop-zoom" min="0.5" max="3" step="0.01" value="1">
+      <input type="range" id="crop-zoom" min="1" max="4" step="0.01" value="1">
       <span style="font-size:13px">🔎</span>
     </div>
     <div class="modal-row">
@@ -201,9 +200,24 @@ function showCropModal(srcUrl) {
 
   const stage = $('crop-stage'), img = $('crop-img'), zoom = $('crop-zoom');
   let scale=1, ox=0, oy=0, dragging=false, startX, startY, startOx, startOy;
+  let baseW=0, baseH=0;
 
   function applyT() { img.style.transform=`translate(calc(-50% + ${ox}px),calc(-50% + ${oy}px)) scale(${scale})`; }
-  applyT();
+
+  function initImageSize() {
+    const stW=stage.offsetWidth, stH=stage.offsetHeight;
+    const natW=img.naturalWidth, natH=img.naturalHeight;
+    if(!natW||!natH) return;
+    // Scale image to cover the circular stage area
+    const cover=Math.max(stW/natW, stH/natH);
+    baseW=natW*cover; baseH=natH*cover;
+    img.style.width=baseW+'px';
+    img.style.height=baseH+'px';
+    applyT();
+  }
+
+  if(img.complete && img.naturalWidth) { initImageSize(); }
+  else { img.addEventListener('load', initImageSize, {once:true}); }
 
   zoom.addEventListener('input',()=>{scale=parseFloat(zoom.value);applyT();});
 
@@ -219,13 +233,13 @@ function showCropModal(srcUrl) {
   stage.addEventListener('touchmove',e=>{
     if(e.touches.length===2){
       const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-      if(lastDist)scale=Math.max(0.5,Math.min(3,scale*(d/lastDist)));
+      if(lastDist)scale=Math.max(1,Math.min(4,scale*(d/lastDist)));
       lastDist=d;zoom.value=scale;applyT();
     } else if(dragging&&e.touches.length===1){ox=startOx+(e.touches[0].clientX-startX);oy=startOy+(e.touches[0].clientY-startY);applyT();}
     e.preventDefault();
   },{passive:false});
   stage.addEventListener('touchend',()=>{dragging=false;lastDist=null;});
-  stage.addEventListener('wheel',e=>{scale=Math.max(0.5,Math.min(3,scale-e.deltaY*0.002));zoom.value=scale;applyT();e.preventDefault();},{passive:false});
+  stage.addEventListener('wheel',e=>{scale=Math.max(1,Math.min(4,scale-e.deltaY*0.003));zoom.value=scale;applyT();e.preventDefault();},{passive:false});
 
   $('crop-cancel').onclick=()=>div.remove();
   div.addEventListener('click',e=>{if(e.target===div)div.remove();});
@@ -233,7 +247,9 @@ function showCropModal(srcUrl) {
   $('crop-save').onclick = async () => {
     const btn=$('crop-save'); btn.disabled=true; btn.textContent='Saving…';
     try {
-      await new Promise(r=>{if(img.complete)r();else img.onload=r;});
+      await new Promise(r=>{if(img.complete&&img.naturalWidth)r();else img.addEventListener('load',r,{once:true});});
+      if(!baseW) initImageSize();
+
       const sz=200, canvas=document.createElement('canvas');
       canvas.width=sz; canvas.height=sz;
       const ctx=canvas.getContext('2d');
@@ -241,15 +257,16 @@ function showCropModal(srcUrl) {
 
       const stW=stage.offsetWidth, stH=stage.offsetHeight;
       const natW=img.naturalWidth, natH=img.naturalHeight;
-      const maxD=Math.min(stW,stH)*0.85;
-      const ratio=Math.min(maxD/natW,maxD/natH);
-      const dispW=natW*ratio*scale, dispH=natH*ratio*scale;
-      const imgL=stW/2+ox-dispW/2, imgT=stH/2+oy-dispH/2;
-      const srcX=(0-imgL)/dispW*natW, srcY=(0-imgT)/dispH*natH;
-      const srcW=stW/dispW*natW, srcH=stH/dispH*natH;
+      // Actual rendered size with current scale
+      const rendW=baseW*scale, rendH=baseH*scale;
+      // Top-left of rendered image in stage coordinates
+      const imgL=stW/2+ox-rendW/2, imgT=stH/2+oy-rendH/2;
+      // Source region in natural image coords (what is visible inside the stage)
+      const srcX=(0-imgL)/rendW*natW, srcY=(0-imgT)/rendH*natH;
+      const srcW=stW/rendW*natW, srcH=stH/rendH*natH;
 
       ctx.drawImage(img,srcX,srcY,srcW,srcH,0,0,sz,sz);
-      const dataUrl=canvas.toDataURL('image/jpeg',0.85);
+      const dataUrl=canvas.toDataURL('image/jpeg',0.88);
 
       const {error}=await SB.from('profiles').update({avatar_url:dataUrl}).eq('username',ME.username);
       if(error) throw new Error(error.message);
@@ -257,7 +274,7 @@ function showCropModal(srcUrl) {
       profilePics[ME.username]=dataUrl;
       ME.avatar_url=dataUrl;
       div.remove();
-      toast('Profile picture updated! 🖼️','🖼️');
+      toast('Profile picture updated!','🖼️');
       renderApp();
     } catch(e) {
       toast('Failed to save: '+e.message,'❌');
@@ -605,8 +622,7 @@ function renderChatPanel(){
         <div class="hdr-status ${online?'online':'offline'}">${online?'Online':'Offline'}</div>
       </div>
       <div class="hdr-btns">
-        <button class="hdr-btn" title="Call">📞</button>
-        <button class="hdr-btn" title="Video">📹</button>
+        <button class="hdr-btn" id="btn-profile-dots" title="View profile">⋮</button>
       </div>
     </div>
     <div class="msgs" id="msgs">${renderMsgList(messages[CHAT]||[])}</div>
@@ -712,6 +728,81 @@ function openForwardModal(content){
   div.addEventListener('click',e=>{if(e.target===div)div.remove();});
   div.querySelectorAll('.fwd-friend').forEach(btn=>{btn.addEventListener('click',async()=>{div.remove();const to=btn.dataset.username;await SB.from('messages').insert({from_user:ME.username,to_user:to,content,read:false});toast(`Forwarded to ${to}`,'↗️');});});
 }
+/* ════════════════ USER PROFILE PANEL ══════════════════════ */
+function showUserProfile(username) {
+  document.getElementById('user-profile-panel')?.remove();
+  const fr = friends.find(f => f.username === username);
+  if (!fr) return;
+  const online = isOnline(username);
+  const msgs = messages[username] || [];
+  const mediaItems = msgs.filter(m => m.content.startsWith('[img]')).slice(-12);
+  const mediaGrid = mediaItems.length
+    ? `<div class="prof-media-grid">${mediaItems.map(m=>{
+        const src = m.content.slice(5);
+        return `<div class="prof-media-thumb" onclick="window.open('${src.slice(0,300).replace(/'/g,'%27')}','_blank')"><img src="${src}" loading="lazy" alt="media"></div>`;
+      }).join('')}</div>`
+    : `<div class="prof-media-empty">No media shared yet</div>`;
+
+  const panel = document.createElement('div');
+  panel.id = 'user-profile-panel';
+  panel.className = 'user-prof-panel';
+  panel.innerHTML = `
+    <div class="prof-header-bar">
+      <button class="prof-close-btn" id="prof-close">✕</button>
+      <span class="prof-header-title">Contact Info</span>
+    </div>
+    <div class="prof-scroll">
+      <div class="prof-hero">
+        <div class="prof-ava-wrap">
+          ${ava(fr.display_name, 'xl', fr.username)}
+        </div>
+        <div class="prof-name">${esc(fr.display_name)}</div>
+        <div class="prof-username">@${esc(fr.username)}</div>
+        <div class="prof-status-badge ${online?'online':'offline'}">${online?'● Online':'● Offline'}</div>
+      </div>
+      <div class="prof-section">
+        <div class="prof-section-title">MEDIA SHARED</div>
+        ${mediaGrid}
+      </div>
+      <div class="prof-section prof-actions">
+        <button class="prof-action-btn danger" id="prof-block-btn">
+          <span>🚫</span> Block ${esc(fr.display_name)}
+        </button>
+      </div>
+    </div>`;
+
+  const chatPanel = document.querySelector('.chat-panel');
+  if (chatPanel) chatPanel.appendChild(panel);
+  else document.body.appendChild(panel);
+
+  requestAnimationFrame(() => panel.classList.add('open'));
+
+  $('prof-close').onclick = () => { panel.classList.remove('open'); setTimeout(()=>panel.remove(), 280); };
+  $('prof-block-btn').onclick = () => confirmBlock(username, fr.display_name, panel);
+}
+
+function confirmBlock(username, displayName, panel) {
+  const div = document.createElement('div');
+  div.className = 'overlay'; div.id = 'block-confirm-overlay';
+  div.innerHTML = `<div class="modal">
+    <h3>🚫 Block ${esc(displayName)}?</h3>
+    <p>They won't be able to send you messages. You can unblock them later from their profile.</p>
+    <div class="modal-row">
+      <button class="btn-sec" id="block-cancel">Cancel</button>
+      <button class="btn-acc" style="background:var(--red)" id="block-confirm">Block</button>
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  $('block-cancel').onclick = () => div.remove();
+  div.addEventListener('click', e => { if(e.target===div) div.remove(); });
+  $('block-confirm').onclick = async () => {
+    div.remove();
+    panel.classList.remove('open');
+    setTimeout(() => panel.remove(), 280);
+    toast(`@${username} has been blocked`, '🚫');
+  };
+}
+
 function bindMsgRows(){
   document.querySelectorAll('.msg-row[data-mid]').forEach(row=>{
     const msgId=row.dataset.mid,isOwn=row.dataset.own==='true';
@@ -857,6 +948,7 @@ function bindApp(){
   $('btn-add-fr')?.addEventListener('click',openAddFriend);
   $('q-in')?.addEventListener('input',e=>{Q=e.target.value;refreshConvList();});
   $('btn-back')?.addEventListener('click',()=>{CHAT=null;document.querySelector('.shell')?.classList.remove('chat-active');renderApp();});
+  $('btn-profile-dots')?.addEventListener('click',()=>{ if(CHAT) showUserProfile(CHAT); });
   bindConvItems();bindFriendActions();bindChatInput();
   if(TAB==='settings')bindSettingsPanel();
   const area=$('msgs');if(area)setTimeout(()=>area.scrollTop=area.scrollHeight,30);
