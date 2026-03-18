@@ -2,8 +2,8 @@
    NEXUS CHAT — app.js
    ═══════════════════════════════════════════ */
 
-const SUPABASE_URL = '';
-const SUPABASE_KEY = '';
+const SUPABASE_URL = 'https://tmfnmjciuoingrsbxnhr.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_PPfG_ZYHhFQWiXBqRyDdbQ_3i1igdZ0';
 
 const CFG_KEY      = 'nx_cfg_v3';
 const SETTINGS_KEY = 'nx_settings_v1';
