@@ -6,6 +6,7 @@ const SUPABASE_URL  = 'https://tmfnmjciuoingrsbxnhr.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_PPfG_ZYHhFQWiXBqRyDdbQ_3i1igdZ0';
 const CFG_KEY       = 'nx_cfg_v3';
 const SETTINGS_KEY  = 'nx_settings_v1';
+const BLOCKS_KEY    = 'nx_blocks_v1';
 const MAX_FILE_BYTES = 600 * 1024;
 
 const COLORS = ['#5c6cf5','#34d399','#f97316','#ec4899','#0ea5e9','#a855f7','#ef4444','#eab308'];
@@ -35,6 +36,7 @@ let currentAudio = null, ctxMenu = null;
 let onlineUsers = new Set();
 let presenceChannel = null;
 let profilePics = {}; // username -> dataUrl (in-memory cache from Supabase)
+let blockedUsers = new Set(); // usernames blocked by ME (persisted in localStorage)
 
 /* ── Utilities ── */
 const clr = u => COLORS[u.split('').reduce((a,c)=>a+c.charCodeAt(0),0) % COLORS.length];
@@ -48,6 +50,26 @@ function ava(name, sz='', username='') {
   const pic = username ? profilePics[username] : null;
   const inner = pic ? `<img src="${pic}" alt="${esc(name)}">` : ini(name);
   return `<div class="ava${sz?' '+sz:''}" style="background:${clr(name)}">${inner}</div>`;
+}
+
+/* ── Block system (persisted per-user in localStorage) ── */
+function loadBlocks() {
+  const saved = JSON.parse(localStorage.getItem(BLOCKS_KEY) || '{}');
+  blockedUsers = new Set(saved[ME?.username] || []);
+}
+function saveBlocks() {
+  const saved = JSON.parse(localStorage.getItem(BLOCKS_KEY) || '{}');
+  saved[ME.username] = [...blockedUsers];
+  localStorage.setItem(BLOCKS_KEY, JSON.stringify(saved));
+}
+function isBlocked(username) { return blockedUsers.has(username); }
+function doBlockUser(username) {
+  blockedUsers.add(username);
+  saveBlocks();
+  // Remove from local friends & close chat
+  friends = friends.filter(f => f.username !== username);
+  delete messages[username];
+  if (CHAT === username) CHAT = null;
 }
 
 /* ── Load profile pictures from Supabase ── */
@@ -409,6 +431,7 @@ async function doSignup(){
 /* ════════════════ BOOT / DATA ════════════════════════════ */
 async function startApp(){
   setHTML(`<div class="loading"><div class="spin"></div><p>Loading your chats…</p></div>`);
+  loadBlocks();
   await loadData();
   await loadProfilePics();
   renderApp();
@@ -423,7 +446,7 @@ async function loadData(){
   friends=[];
   if(frSet.size>0){
     const {data:p}=await SB.from('profiles').select('username,display_name,avatar_url').in('username',[...frSet]);
-    friends=p||[];
+    friends=(p||[]).filter(f=>!isBlocked(f.username));
     friends.forEach(f=>{if(f.avatar_url)profilePics[f.username]=f.avatar_url;});
   }
   const {data:reqs}=await SB.from('friendships').select('*').or(`from_user.eq.${u},to_user.eq.${u}`).eq('status','pending');
@@ -442,7 +465,11 @@ async function loadMessages(fr){
     .or(`and(from_user.eq.${u},to_user.eq.${fr}),and(from_user.eq.${fr},to_user.eq.${u})`)
     .order('created_at',{ascending:true});
   messages[fr]=msgs||[];
-  await SB.from('messages').update({read:true}).eq('to_user',u).eq('from_user',fr).eq('read',false);
+  // Mark as read locally right away so the badge clears immediately
+  messages[fr]=messages[fr].map(m=>m.to_user===u&&!m.read?{...m,read:true}:m);
+  refreshConvList();
+  // Persist read status to DB (fire-and-forget)
+  SB.from('messages').update({read:true}).eq('to_user',u).eq('from_user',fr).eq('read',false);
 }
 function subscribeRealtime(){
   if(realtimeSub)SB.removeChannel(realtimeSub);
@@ -450,11 +477,37 @@ function subscribeRealtime(){
     .on('postgres_changes',{event:'INSERT',schema:'public',table:'messages'},p=>{
       const msg=p.new,u=ME.username;
       if(msg.from_user!==u&&msg.to_user!==u)return;
+      // Ignore messages from blocked users
+      if(isBlocked(msg.from_user)||isBlocked(msg.to_user))return;
       const other=msg.from_user===u?msg.to_user:msg.from_user;
       if(!messages[other])messages[other]=[];
       if(!messages[other].find(m=>m.id===msg.id))messages[other].push(msg);
-      if(CHAT===other){if(msg.from_user!==u)SB.from('messages').update({read:true}).eq('id',msg.id);refreshMsgs();}
-      else{refreshConvList();if(msg.from_user!==u)toast(`New message from @${msg.from_user}`,'💬');}
+      if(CHAT===other){
+        if(msg.from_user!==u){
+          // Mark read locally and in DB immediately
+          const idx=messages[other].findIndex(m=>m.id===msg.id);
+          if(idx!==-1)messages[other][idx]={...messages[other][idx],read:true};
+          SB.from('messages').update({read:true}).eq('id',msg.id);
+        }
+        refreshMsgs();
+      } else {
+        refreshConvList();
+        if(msg.from_user!==u)toast(`New message from @${msg.from_user}`,'💬');
+      }
+    })
+    // Live read-receipt updates → blue ticks for sender
+    .on('postgres_changes',{event:'UPDATE',schema:'public',table:'messages'},p=>{
+      const msg=p.new,u=ME.username;
+      if(msg.from_user!==u&&msg.to_user!==u)return;
+      const other=msg.from_user===u?msg.to_user:msg.from_user;
+      if(messages[other]){
+        const idx=messages[other].findIndex(m=>m.id===msg.id);
+        if(idx!==-1){
+          messages[other][idx]={...messages[other][idx],...msg};
+          if(CHAT===other)refreshMsgs();
+          else refreshConvList();
+        }
+      }
     })
     .on('postgres_changes',{event:'UPDATE',schema:'public',table:'friendships'},p=>{
       if(p.new.status==='accepted'){loadData().then(async()=>{await loadProfilePics();renderApp();});toast('Friend request accepted! 🎉','🎉');}
@@ -786,7 +839,7 @@ function confirmBlock(username, displayName, panel) {
   div.className = 'overlay'; div.id = 'block-confirm-overlay';
   div.innerHTML = `<div class="modal">
     <h3>🚫 Block ${esc(displayName)}?</h3>
-    <p>They won't be able to send you messages. You can unblock them later from their profile.</p>
+    <p>You won't see their messages and they won't receive yours. You can unblock them by re-adding as a friend.</p>
     <div class="modal-row">
       <button class="btn-sec" id="block-cancel">Cancel</button>
       <button class="btn-acc" style="background:var(--red)" id="block-confirm">Block</button>
@@ -799,7 +852,10 @@ function confirmBlock(username, displayName, panel) {
     div.remove();
     panel.classList.remove('open');
     setTimeout(() => panel.remove(), 280);
+    // Actually block: removes from friends, closes chat, prevents all messages
+    doBlockUser(username);
     toast(`@${username} has been blocked`, '🚫');
+    renderApp();
   };
 }
 
@@ -879,6 +935,7 @@ async function handleFileInput(files,isImage){
 /* ════════════════ SEND ════════════════════════════════════ */
 async function sendContent(content){
   if(!CHAT)return;
+  if(isBlocked(CHAT)){toast('You have blocked this person','🚫');return;}
   const {data,error}=await SB.from('messages').insert({from_user:ME.username,to_user:CHAT,content,read:false}).select().single();
   if(!error&&data){if(!messages[CHAT])messages[CHAT]=[];messages[CHAT].push(data);refreshMsgs();}
   else if(error)toast('Send failed: '+error.message,'❌');
