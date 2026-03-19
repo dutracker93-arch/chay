@@ -684,8 +684,8 @@ function renderChatPanel(){
         <button class="ia-btn" id="attach-btn" title="Attach file">📎</button>
         <textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea>
         <div class="ia">
-          <button class="ia-btn" id="emoji-btn" title="Emoji"><img src="emoji.png" alt="Emoji"></button>
-          <button class="voice-rec-btn" id="voice-btn" title="Record voice message"><img src="mic.png" alt="Mic"></button>
+          <button class="ia-btn" id="emoji-btn" title="Emoji">😊</button>
+          <button class="voice-rec-btn" id="voice-btn" title="Record voice message">🎤</button>
           <button class="send-btn" id="send-btn" title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -1052,7 +1052,7 @@ function bindFriendActions(){
 }
 function restoreInputBox(){
   const fr=friends.find(f=>f.username===CHAT);if(!fr)return;const inputBox=$('input-box');if(!inputBox)return;
- <button class="ia-btn" id="emoji-btn" title="Emoji"><img src="emoji.png" alt="Emoji"></button><button class="voice-rec-btn" id="voice-btn" title="Record voice message"><img src="mic.png" alt="Mic"></button>
+  inputBox.innerHTML=`<button class="ia-btn" id="attach-btn" title="Attach file">📎</button><textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea><div class="ia"><button class="ia-btn" id="emoji-btn" title="Emoji">😊</button><button class="voice-rec-btn" id="voice-btn" title="Record voice message">🎤</button><button class="send-btn" id="send-btn" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>`;
   bindChatInput();
 }
 function bindChatInput(){
@@ -1088,19 +1088,24 @@ function bindChatInput(){
 
 /* ════════════════ BOOT ════════════════════════════════════ */
 async function boot(){
-  loadSettings();
-  let url=SUPABASE_URL.trim(),key=SUPABASE_KEY.trim();
-  if(!url||!key){const saved=JSON.parse(localStorage.getItem(CFG_KEY)||'null');if(saved){url=saved.url;key=saved.key;}}
-  if(!url||!key){showSetup();return;}
-  SB=supabase.createClient(url,key);
-  const {error}=await SB.from('profiles').select('id').limit(1);
-  if(error){showSetup();return;}
-  const sess=JSON.parse(localStorage.getItem('nx_session')||'null');
-  if(sess){
-    const {data:prof}=await SB.from('profiles').select('*').eq('username',sess.username).single();
-    if(prof){ME=prof;if(ME.avatar_url)profilePics[ME.username]=ME.avatar_url;startApp();return;}
+  try{
+    loadSettings();
+    let url=SUPABASE_URL.trim(),key=SUPABASE_KEY.trim();
+    if(!url||!key){const saved=JSON.parse(localStorage.getItem(CFG_KEY)||'null');if(saved){url=saved.url;key=saved.key;}}
+    if(!url||!key){showSetup();return;}
+    SB=supabase.createClient(url,key);
+    const {error}=await SB.from('profiles').select('id').limit(1);
+    if(error){showSetup();return;}
+    const sess=JSON.parse(localStorage.getItem('nx_session')||'null');
+    if(sess){
+      const {data:prof}=await SB.from('profiles').select('*').eq('username',sess.username).single();
+      if(prof){ME=prof;if(ME.avatar_url)profilePics[ME.username]=ME.avatar_url;startApp();return;}
+    }
+    showAuth();
+  }catch(e){
+    console.error('Boot error:',e);
+    showAuth();
   }
-  showAuth();
 }
 
 boot();
