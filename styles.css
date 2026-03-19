@@ -292,24 +292,15 @@ input,textarea,select{font-family:var(--f)}
 .bubble.in .file-size{color:var(--t3)}
 
 /* Voice message */
-.voice-msg{display:flex;align-items:center;gap:10px;min-width:200px;padding:4px 0 0}
+.voice-msg{display:flex;align-items:center;gap:10px;min-width:220px;padding:4px 0 0}
 .voice-play-btn{width:36px;height:36px;border-radius:50%;border:none;background:rgba(255,255,255,.18);color:#fff;font-size:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:all var(--tf)}
 .voice-play-btn:hover{background:rgba(255,255,255,.28);transform:scale(1.08)}
-.voice-waveform{flex:1;display:flex;align-items:center;gap:2px;height:30px}
-.voice-bar{width:3px;border-radius:3px;background:rgba(255,255,255,.45);animation:waveBar 1.2s ease-in-out infinite;transform-origin:bottom}
-.voice-bar:nth-child(1){height:40%;animation-delay:0s}
-.voice-bar:nth-child(2){height:65%;animation-delay:.1s}
-.voice-bar:nth-child(3){height:100%;animation-delay:.2s}
-.voice-bar:nth-child(4){height:75%;animation-delay:.3s}
-.voice-bar:nth-child(5){height:50%;animation-delay:.4s}
-.voice-bar:nth-child(6){height:80%;animation-delay:.5s}
-.voice-bar:nth-child(7){height:55%;animation-delay:.15s}
-.voice-bar:nth-child(8){height:35%;animation-delay:.25s}
-.voice-bar.paused{animation-play-state:paused}
-.voice-duration{font-size:11.5px;color:rgba(255,255,255,.6);flex-shrink:0;min-width:28px;text-align:right}
+.voice-seek-wrap{flex:1;display:flex;flex-direction:column;gap:5px;min-width:0}
+.voice-seek-bar{width:100%;height:4px;accent-color:rgba(255,255,255,.85);cursor:pointer;display:block;margin:0}
+.voice-times{display:flex;justify-content:space-between;font-size:10.5px;color:rgba(255,255,255,.55);padding:0 2px}
 .bubble.in .voice-play-btn{background:rgba(88,101,242,.25);color:var(--accent)}
-.bubble.in .voice-bar{background:rgba(88,101,242,.5)}
-.bubble.in .voice-duration{color:var(--t3)}
+.bubble.in .voice-seek-bar{accent-color:var(--accent)}
+.bubble.in .voice-times{color:var(--t3)}
 
 /* Input zone */
 .input-zone{padding:8px 12px 12px;background:var(--c-chat);flex-shrink:0;transition:background .25s}
