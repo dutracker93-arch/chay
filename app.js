@@ -684,8 +684,8 @@ function renderChatPanel(){
         <button class="ia-btn" id="attach-btn" title="Attach file">📎</button>
         <textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea>
         <div class="ia">
-          <button class="ia-btn" id="emoji-btn" title="Emoji">😊</button>
-          <button class="voice-rec-btn" id="voice-btn" title="Record voice message">🎤</button>
+          <button class="ia-btn" id="emoji-btn" title="Emoji"><img src="emoji.png" class="ia-img" alt="emoji"></button>
+          <button class="voice-rec-btn" id="voice-btn" title="Record voice message"><img src="mic.png" class="ia-img" alt="mic"></button>
           <button class="send-btn" id="send-btn" title="Send">
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           </button>
@@ -742,8 +742,38 @@ function renderFileBubble(content){
   return `<a class="msg-file-card" href="${data}" download="${esc(fname)}" onclick="event.stopPropagation()"><span class="file-icon">${fileIcon(fname)}</span><div class="file-meta"><div class="file-name">${esc(fname)}</div>${fsize?`<div class="file-size">${fsize}</div>`:''}</div></a>`;
 }
 
-function refreshMsgs(){const area=$('msgs');if(area&&CHAT){area.innerHTML=renderMsgList(messages[CHAT]||[]);area.scrollTop=area.scrollHeight;}refreshConvList();bindMsgRows();}
-function refreshConvList(){const cl=$('conv-list');if(!cl)return;const tmp=document.createElement('div');tmp.innerHTML=renderConvPanel();const nl=tmp.querySelector('#conv-list');if(nl){cl.innerHTML=nl.innerHTML;bindConvItems();}}
+function refreshMsgs(){
+  const area=$('msgs');
+  if(!area||!CHAT){refreshConvList();return;}
+  const msgs=(messages[CHAT]||[]).filter(m=>m.from_user===ME.username||!isBlocked(m.from_user));
+  const rendered=area.querySelectorAll('[data-mid]');
+  const renderedIds=[...rendered].map(el=>el.dataset.mid);
+  const msgIds=msgs.map(m=>m.id);
+  // If same set of messages, just patch ticks in-place — no re-render, no flash
+  if(renderedIds.length===msgs.length&&renderedIds.every((id,i)=>id===msgIds[i])){
+    rendered.forEach(row=>{
+      const msg=msgs.find(m=>m.id===row.dataset.mid);
+      if(msg&&row.dataset.own==='true'){
+        const ticks=row.querySelector('.ticks');
+        if(ticks)ticks.className='ticks'+(msg.read?' read':'');
+      }
+    });
+    refreshConvList();bindMsgRows();return;
+  }
+  // New or removed messages — re-render but preserve scroll position
+  const wasNearBottom=area.scrollHeight-area.scrollTop-area.clientHeight<120;
+  const prevScroll=area.scrollTop;
+  area.innerHTML=renderMsgList(msgs);
+  area.scrollTop=wasNearBottom?area.scrollHeight:prevScroll;
+  refreshConvList();bindMsgRows();
+}
+function refreshConvList(){
+  const cl=$('conv-list');if(!cl)return;
+  const scrollTop=cl.scrollTop;
+  const tmp=document.createElement('div');tmp.innerHTML=renderConvPanel();
+  const nl=tmp.querySelector('#conv-list');
+  if(nl){cl.innerHTML=nl.innerHTML;cl.scrollTop=scrollTop;bindConvItems();}
+}
 
 /* ════════════════ CONTEXT MENU ═══════════════════════════ */
 function closeCtxMenu(){if(ctxMenu){ctxMenu.remove();ctxMenu=null;}}
@@ -1052,7 +1082,7 @@ function bindFriendActions(){
 }
 function restoreInputBox(){
   const fr=friends.find(f=>f.username===CHAT);if(!fr)return;const inputBox=$('input-box');if(!inputBox)return;
-  inputBox.innerHTML=`<button class="ia-btn" id="attach-btn" title="Attach file">📎</button><textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea><div class="ia"><button class="ia-btn" id="emoji-btn" title="Emoji">😊</button><button class="voice-rec-btn" id="voice-btn" title="Record voice message">🎤</button><button class="send-btn" id="send-btn" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>`;
+  inputBox.innerHTML=`<button class="ia-btn" id="attach-btn" title="Attach file">📎</button><textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea><div class="ia"><button class="ia-btn" id="emoji-btn" title="Emoji"><img src="emoji.png" class="ia-img" alt="emoji"></button><button class="voice-rec-btn" id="voice-btn" title="Record voice message"><img src="mic.png" class="ia-img" alt="mic"></button><button class="send-btn" id="send-btn" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>`;
   bindChatInput();
 }
 function bindChatInput(){
