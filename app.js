@@ -965,13 +965,29 @@ function bindMsgRows(){
     });
     seekEl.addEventListener('mouseup',()=>{seekEl._seeking=false;});
     seekEl.addEventListener('touchend',()=>{seekEl._seeking=false;},{passive:true});
-    // Restore seek bar position if this audio is already loaded (e.g. after DOM re-render mid-playback)
-    const audio=voiceAudios[sid];
-    if(audio&&audio.readyState>=1&&isFinite(audio.duration)){
-      seekEl.max=audio.duration;seekEl.value=audio.currentTime;
-      const durEl=document.getElementById(`${sid}-dur`),posEl=document.getElementById(`${sid}-pos`);
-      if(durEl)durEl.textContent=fmtDuration(Math.round(audio.duration));
-      if(posEl)posEl.textContent=fmtDuration(Math.round(audio.currentTime));
+    // Sync seek bar from cached audio (after DOM re-render mid-playback)
+    const existing=voiceAudios[sid];
+    if(existing){
+      if(existing.readyState>=1&&isFinite(existing.duration)){
+        seekEl.max=existing.duration;seekEl.value=existing.currentTime;
+        const durEl=document.getElementById(`${sid}-dur`),posEl=document.getElementById(`${sid}-pos`);
+        if(durEl)durEl.textContent=fmtDuration(Math.round(existing.duration));
+        if(posEl)posEl.textContent=fmtDuration(Math.round(existing.currentTime));
+      }
+    } else {
+      // Eagerly create Audio + load metadata so max is correct without requiring play
+      const btn=document.getElementById(sid);
+      if(btn&&btn.dataset.src){
+        const a=new Audio(btn.dataset.src);
+        voiceAudios[sid]=a;
+        if(SETTINGS.speakerId&&a.setSinkId)a.setSinkId(SETTINGS.speakerId).catch(()=>{});
+        a.addEventListener('loadedmetadata',()=>{
+          const dur=isFinite(a.duration)?a.duration:0;
+          const sk=document.getElementById(`${sid}-seek`),durEl=document.getElementById(`${sid}-dur`);
+          if(sk)sk.max=dur||100;
+          if(durEl)durEl.textContent=fmtDuration(Math.round(dur));
+        },{once:true});
+      }
     }
   });
 }
@@ -1009,27 +1025,28 @@ async function stopRecording(){
   isStoppingRecording=false;
   const reader=new FileReader();reader.onloadend=()=>{showVoicePreview(reader.result);};reader.readAsDataURL(blob);
 }
-function showVoicePreview(dataUrl){
+async function showVoicePreview(dataUrl){
   voicePreviewDataUrl=dataUrl;
   const inputBox=$('input-box');if(!inputBox)return;
   if(voicePreviewAudio){voicePreviewAudio.pause();voicePreviewAudio=null;}
   const audio=new Audio(dataUrl);voicePreviewAudio=audio;
   if(SETTINGS.speakerId&&audio.setSinkId)audio.setSinkId(SETTINGS.speakerId).catch(()=>{});
+  // Pre-load duration so the bar max is correct from the very first render
+  const dur=await new Promise(r=>{
+    if(audio.readyState>=1&&isFinite(audio.duration)){r(audio.duration);return;}
+    audio.addEventListener('loadedmetadata',()=>r(isFinite(audio.duration)?audio.duration:0),{once:true});
+  });
+  if(!$('input-box'))return; // safety: box may have been removed while awaiting
   inputBox.innerHTML=`<button class="vp-discard" id="vp-discard" title="Discard">✕</button>
     <button class="vp-play-btn" id="vp-play">▶</button>
     <div class="vp-progress">
-      <input type="range" class="vp-seek" id="vp-seek" min="0" max="100" value="0" step="0.1">
-      <div class="vp-times"><span id="vp-current">0:00</span><span id="vp-total">0:00</span></div>
+      <input type="range" class="vp-seek" id="vp-seek" min="0" max="${dur||100}" value="0" step="0.01">
+      <div class="vp-times"><span id="vp-current">0:00</span><span id="vp-total">${fmtDuration(Math.round(dur))}</span></div>
     </div>
     <button class="vp-send-btn" id="vp-send" title="Send">
       <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
     </button>`;
   let seeking=false;
-  audio.onloadedmetadata=()=>{
-    const dur=isFinite(audio.duration)?audio.duration:0;
-    const durEl=$('vp-total');if(durEl)durEl.textContent=fmtDuration(Math.round(dur));
-    const seek=$('vp-seek');if(seek)seek.max=dur||100;
-  };
   audio.ontimeupdate=()=>{
     if(seeking)return;
     const curEl=$('vp-current');if(curEl)curEl.textContent=fmtDuration(Math.round(audio.currentTime));
