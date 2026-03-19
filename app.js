@@ -66,10 +66,10 @@ function isBlocked(username) { return blockedUsers.has(username); }
 function doBlockUser(username) {
   blockedUsers.add(username);
   saveBlocks();
-  // Remove from local friends & close chat
-  friends = friends.filter(f => f.username !== username);
-  delete messages[username];
-  if (CHAT === username) CHAT = null;
+}
+function doUnblockUser(username) {
+  blockedUsers.delete(username);
+  saveBlocks();
 }
 
 /* ── Load profile pictures from Supabase ── */
@@ -446,7 +446,7 @@ async function loadData(){
   friends=[];
   if(frSet.size>0){
     const {data:p}=await SB.from('profiles').select('username,display_name,avatar_url').in('username',[...frSet]);
-    friends=(p||[]).filter(f=>!isBlocked(f.username));
+    friends=(p||[]);
     friends.forEach(f=>{if(f.avatar_url)profilePics[f.username]=f.avatar_url;});
   }
   const {data:reqs}=await SB.from('friendships').select('*').or(`from_user.eq.${u},to_user.eq.${u}`).eq('status','pending');
@@ -699,6 +699,8 @@ function renderChatPanel(){
 
 /* ── Message list ── */
 function renderMsgList(msgs){
+  // Filter out messages sent by blocked users (but keep your own outgoing messages)
+  msgs = msgs.filter(m => m.from_user === ME.username || !isBlocked(m.from_user));
   if(!msgs.length)return `<div style="text-align:center;color:var(--t3);font-size:13px;padding:48px 0">No messages yet — say hello 👋</div>`;
   let html='',lastDate='';
   for(let i=0;i<msgs.length;i++){
@@ -818,9 +820,10 @@ function showUserProfile(username) {
         ${mediaGrid}
       </div>
       <div class="prof-section prof-actions">
-        <button class="prof-action-btn danger" id="prof-block-btn">
-          <span>🚫</span> Block ${esc(fr.display_name)}
-        </button>
+        ${isBlocked(username)
+          ? `<button class="prof-action-btn" id="prof-block-btn" style="background:var(--accent-lo);color:var(--accent)"><span>✅</span> Unblock ${esc(fr.display_name)}</button>`
+          : `<button class="prof-action-btn danger" id="prof-block-btn"><span>🚫</span> Block ${esc(fr.display_name)}</button>`
+        }
       </div>
     </div>`;
 
@@ -831,7 +834,10 @@ function showUserProfile(username) {
   requestAnimationFrame(() => panel.classList.add('open'));
 
   $('prof-close').onclick = () => { panel.classList.remove('open'); setTimeout(()=>panel.remove(), 280); };
-  $('prof-block-btn').onclick = () => confirmBlock(username, fr.display_name, panel);
+  $('prof-block-btn').onclick = () => {
+    if (isBlocked(username)) confirmUnblock(username, fr.display_name, panel);
+    else confirmBlock(username, fr.display_name, panel);
+  };
 }
 
 function confirmBlock(username, displayName, panel) {
@@ -839,7 +845,7 @@ function confirmBlock(username, displayName, panel) {
   div.className = 'overlay'; div.id = 'block-confirm-overlay';
   div.innerHTML = `<div class="modal">
     <h3>🚫 Block ${esc(displayName)}?</h3>
-    <p>You won't see their messages and they won't receive yours. You can unblock them by re-adding as a friend.</p>
+    <p>Their messages will be hidden from you, and yours won't be visible to them. They stay in your friends list. You can unblock them anytime from their profile.</p>
     <div class="modal-row">
       <button class="btn-sec" id="block-cancel">Cancel</button>
       <button class="btn-acc" style="background:var(--red)" id="block-confirm">Block</button>
@@ -848,13 +854,36 @@ function confirmBlock(username, displayName, panel) {
   document.body.appendChild(div);
   $('block-cancel').onclick = () => div.remove();
   div.addEventListener('click', e => { if(e.target===div) div.remove(); });
-  $('block-confirm').onclick = async () => {
+  $('block-confirm').onclick = () => {
     div.remove();
     panel.classList.remove('open');
     setTimeout(() => panel.remove(), 280);
-    // Actually block: removes from friends, closes chat, prevents all messages
     doBlockUser(username);
     toast(`@${username} has been blocked`, '🚫');
+    renderApp();
+  };
+}
+
+function confirmUnblock(username, displayName, panel) {
+  const div = document.createElement('div');
+  div.className = 'overlay'; div.id = 'block-confirm-overlay';
+  div.innerHTML = `<div class="modal">
+    <h3>✅ Unblock ${esc(displayName)}?</h3>
+    <p>You'll be able to see each other's messages again.</p>
+    <div class="modal-row">
+      <button class="btn-sec" id="block-cancel">Cancel</button>
+      <button class="btn-acc" id="block-confirm">Unblock</button>
+    </div>
+  </div>`;
+  document.body.appendChild(div);
+  $('block-cancel').onclick = () => div.remove();
+  div.addEventListener('click', e => { if(e.target===div) div.remove(); });
+  $('block-confirm').onclick = () => {
+    div.remove();
+    panel.classList.remove('open');
+    setTimeout(() => panel.remove(), 280);
+    doUnblockUser(username);
+    toast(`@${username} has been unblocked`, '✅');
     renderApp();
   };
 }
@@ -965,8 +994,12 @@ async function doSendReq(){
   const {data:prof}=await SB.from('profiles').select('username').eq('username',t).single();
   if(!prof){mm('User not found','err');btn.disabled=false;btn.textContent='Send Request';return;}
   if(friends.find(f=>f.username===t)){mm('Already friends!','err');btn.disabled=false;btn.textContent='Send Request';return;}
-  const {data:ex}=await SB.from('friendships').select('id').or(`and(from_user.eq.${ME.username},to_user.eq.${t}),and(from_user.eq.${t},to_user.eq.${ME.username})`).eq('status','pending').single();
-  if(ex){mm('Request already pending','err');btn.disabled=false;btn.textContent='Send Request';return;}
+  // Check for ANY existing row (any status) to avoid duplicate key constraint error
+  const {data:ex}=await SB.from('friendships').select('id,status').or(`and(from_user.eq.${ME.username},to_user.eq.${t}),and(from_user.eq.${t},to_user.eq.${ME.username})`).maybeSingle();
+  if(ex){
+    const msg=ex.status==='pending'?'Request already pending':'Already connected';
+    mm(msg,'err');btn.disabled=false;btn.textContent='Send Request';return;
+  }
   const {error}=await SB.from('friendships').insert({from_user:ME.username,to_user:t,status:'pending'});
   if(error){mm('Error: '+error.message,'err');btn.disabled=false;btn.textContent='Send Request';return;}
   $('overlay')?.remove();requests.push({from_user:ME.username,to_user:t,status:'pending'});
