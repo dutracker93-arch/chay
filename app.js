@@ -33,6 +33,8 @@ let friends = [], requests = [], messages = {};
 let SETTINGS = { theme:'dark', accent:'#5865f2', micId:'', speakerId:'', notifSound:true };
 let mediaRecorder = null, audioChunks = [], recInterval = null, recSeconds = 0;
 let currentAudio = null, ctxMenu = null;
+let isStoppingRecording = false;
+let voicePreviewDataUrl = null, voicePreviewAudio = null;
 let onlineUsers = new Set();
 let presenceChannel = null;
 let profilePics = {}; // username -> dataUrl (in-memory cache from Supabase)
@@ -515,6 +517,18 @@ function subscribeRealtime(){
     .on('postgres_changes',{event:'INSERT',schema:'public',table:'friendships'},p=>{
       if(p.new.to_user===ME.username){loadData().then(async()=>{await loadProfilePics();renderApp();});toast(`Friend request from @${p.new.from_user}`,'👋');}
     })
+    // Real-time message deletion — remove from peer's screen immediately
+    .on('postgres_changes',{event:'DELETE',schema:'public',table:'messages'},p=>{
+      const msgId=p.old?.id;if(!msgId)return;
+      for(const [friend,msgs] of Object.entries(messages)){
+        const idx=msgs.findIndex(m=>m.id===msgId);
+        if(idx!==-1){
+          messages[friend]=msgs.filter(m=>m.id!==msgId);
+          if(CHAT===friend)refreshMsgs();else refreshConvList();
+          break;
+        }
+      }
+    })
     // Live avatar updates from other users
     .on('postgres_changes',{event:'UPDATE',schema:'public',table:'profiles'},p=>{
       if(p.new.avatar_url&&p.new.username!==ME.username){
@@ -947,12 +961,62 @@ async function startRecording(){
     recInterval=setInterval(()=>{recSeconds++;const t=$('rec-timer');if(t)t.textContent=fmtDuration(recSeconds);if(recSeconds>=120)stopRecording();},1000);
   }catch(err){toast('Microphone access denied','🚫');}
 }
-function cancelRecording(){clearInterval(recInterval);if(mediaRecorder&&mediaRecorder.state!=='inactive'){mediaRecorder.stream.getTracks().forEach(t=>t.stop());mediaRecorder.stop();}mediaRecorder=null;audioChunks=[];restoreInputBox();}
+function cancelRecording(){
+  clearInterval(recInterval);isStoppingRecording=false;
+  if(mediaRecorder&&mediaRecorder.state!=='inactive'){mediaRecorder.stream.getTracks().forEach(t=>t.stop());mediaRecorder.stop();}
+  mediaRecorder=null;audioChunks=[];restoreInputBox();
+}
 async function stopRecording(){
-  clearInterval(recInterval);if(!mediaRecorder||audioChunks.length===0){cancelRecording();return;}
+  if(isStoppingRecording)return;
+  isStoppingRecording=true;
+  clearInterval(recInterval);
+  if(!mediaRecorder||audioChunks.length===0){cancelRecording();return;}
   await new Promise(resolve=>{mediaRecorder.onstop=resolve;mediaRecorder.stream.getTracks().forEach(t=>t.stop());if(mediaRecorder.state!=='inactive')mediaRecorder.stop();});
   const blob=new Blob(audioChunks,{type:mediaRecorder.mimeType||'audio/webm'});audioChunks=[];mediaRecorder=null;
-  const reader=new FileReader();reader.onloadend=async()=>{await sendContent('[voice]'+reader.result);};reader.readAsDataURL(blob);restoreInputBox();
+  isStoppingRecording=false;
+  const reader=new FileReader();reader.onloadend=()=>{showVoicePreview(reader.result);};reader.readAsDataURL(blob);
+}
+function showVoicePreview(dataUrl){
+  voicePreviewDataUrl=dataUrl;
+  const inputBox=$('input-box');if(!inputBox)return;
+  if(voicePreviewAudio){voicePreviewAudio.pause();voicePreviewAudio=null;}
+  const audio=new Audio(dataUrl);voicePreviewAudio=audio;
+  if(SETTINGS.speakerId&&audio.setSinkId)audio.setSinkId(SETTINGS.speakerId).catch(()=>{});
+  inputBox.innerHTML=`<button class="vp-discard" id="vp-discard" title="Discard">✕</button>
+    <button class="vp-play-btn" id="vp-play">▶</button>
+    <div class="vp-progress">
+      <input type="range" class="vp-seek" id="vp-seek" min="0" max="100" value="0" step="0.1">
+      <div class="vp-times"><span id="vp-current">0:00</span><span id="vp-total">0:00</span></div>
+    </div>
+    <button class="vp-send-btn" id="vp-send" title="Send">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    </button>`;
+  let seeking=false;
+  audio.onloadedmetadata=()=>{
+    const dur=isFinite(audio.duration)?audio.duration:0;
+    const durEl=$('vp-total');if(durEl)durEl.textContent=fmtDuration(Math.round(dur));
+    const seek=$('vp-seek');if(seek)seek.max=dur||100;
+  };
+  audio.ontimeupdate=()=>{
+    if(seeking)return;
+    const curEl=$('vp-current');if(curEl)curEl.textContent=fmtDuration(Math.round(audio.currentTime));
+    const seek=$('vp-seek');if(seek)seek.value=audio.currentTime;
+  };
+  audio.onplay=()=>{const btn=$('vp-play');if(btn)btn.textContent='⏸';};
+  audio.onpause=audio.onended=()=>{const btn=$('vp-play');if(btn)btn.textContent='▶';};
+  $('vp-play').onclick=()=>{if(audio.paused)audio.play().catch(()=>{});else audio.pause();};
+  const seekEl=$('vp-seek');
+  seekEl.addEventListener('mousedown',()=>{seeking=true;});
+  seekEl.addEventListener('touchstart',()=>{seeking=true;},{passive:true});
+  seekEl.addEventListener('input',()=>{audio.currentTime=parseFloat(seekEl.value);const curEl=$('vp-current');if(curEl)curEl.textContent=fmtDuration(Math.round(audio.currentTime));});
+  seekEl.addEventListener('mouseup',()=>{seeking=false;});
+  seekEl.addEventListener('touchend',()=>{seeking=false;},{passive:true});
+  $('vp-discard').onclick=()=>{audio.pause();voicePreviewAudio=null;voicePreviewDataUrl=null;restoreInputBox();};
+  $('vp-send').onclick=async()=>{
+    audio.pause();voicePreviewAudio=null;
+    const url=voicePreviewDataUrl;voicePreviewDataUrl=null;
+    restoreInputBox();await sendContent('[voice]'+url);
+  };
 }
 function playVoice(sid){
   const btn=document.getElementById(sid);if(!btn)return;
