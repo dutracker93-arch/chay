@@ -384,7 +384,12 @@ async function doSetup(){
 /* ════════════════ AUTH ════════════════════════════════════ */
 function showAuth(mode='login'){
   setHTML(`<div class="auth-wrap"><div class="auth-box">
-    <div class="auth-logo"><div class="auth-logo-icon"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><span>Nexus</span></div>
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <img src="app.png" alt="Nexus" class="auth-logo-img">
+      </div>
+      <span>Nexus</span>
+    </div>
     <div id="auth-body">${mode==='login'?loginForm():signupForm()}</div>
   </div></div>`);
   bindAuth();
@@ -679,7 +684,18 @@ function renderSettingsPanel(){
   </div>`;
 }
 
-function renderEmptyPanel(){return `<div class="chat-panel" style="display:flex;align-items:center;justify-content:center"><div class="no-chat"><div class="no-chat-icon">⚡</div><h2>Nexus Chat</h2><p>Select a conversation or add a friend to get started</p></div></div>`;}
+/* ── Empty panel — uses app.png logo ── */
+function renderEmptyPanel(){
+  return `<div class="chat-panel" style="display:flex;align-items:center;justify-content:center">
+    <div class="no-chat">
+      <div class="no-chat-icon">
+        <img src="app.png" alt="Nexus" class="no-chat-logo-img">
+      </div>
+      <h2>Nexus Chat</h2>
+      <p>Select a conversation or add a friend to get started</p>
+    </div>
+  </div>`;
+}
 
 function renderChatPanel(){
   const fr=friends.find(f=>f.username===CHAT);if(!fr)return renderEmptyPanel();
