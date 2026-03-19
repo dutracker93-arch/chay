@@ -1052,7 +1052,7 @@ function bindFriendActions(){
 }
 function restoreInputBox(){
   const fr=friends.find(f=>f.username===CHAT);if(!fr)return;const inputBox=$('input-box');if(!inputBox)return;
-  inputBox.innerHTML=`<button class="ia-btn" id="attach-btn" title="Attach file">📎</button><textarea class="msg-ta" id="msg-ta" placeholder="Message ${esc(fr.display_name)}…" rows="1"></textarea><div class="ia"><button class="ia-btn" id="emoji-btn" title="Emoji">😊</button><button class="voice-rec-btn" id="voice-btn" title="Record voice message">🎤</button><button class="send-btn" id="send-btn" title="Send"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button></div>`;
+ <button class="ia-btn" id="emoji-btn" title="Emoji"><img src="emoji.png" alt="Emoji"></button><button class="voice-rec-btn" id="voice-btn" title="Record voice message"><img src="mic.png" alt="Mic"></button>
   bindChatInput();
 }
 function bindChatInput(){
