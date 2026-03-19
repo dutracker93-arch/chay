@@ -506,13 +506,3 @@ input,textarea,select{font-family:var(--f)}
   .user-prof-panel{width:100%;border-left:none;box-shadow:none}
   .prof-media-thumb{border-radius:2px}
 }
-
-/* ══ CUSTOM ICON BUTTONS ═══════════════════════════════════ */
-.ia-btn img,
-.voice-rec-btn img{
-  width:22px;
-  height:22px;
-  object-fit:contain;
-  display:block;
-  pointer-events:none;
-}
