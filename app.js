@@ -987,6 +987,7 @@ function bindMsgRows(){
           if(sk)sk.max=dur||100;
           if(durEl)durEl.textContent=fmtDuration(Math.round(dur));
         },{once:true});
+        a.load();
       }
     }
   });
@@ -1035,6 +1036,8 @@ async function showVoicePreview(dataUrl){
   const dur=await new Promise(r=>{
     if(audio.readyState>=1&&isFinite(audio.duration)){r(audio.duration);return;}
     audio.addEventListener('loadedmetadata',()=>r(isFinite(audio.duration)?audio.duration:0),{once:true});
+    audio.addEventListener('error',()=>r(0),{once:true});
+    audio.load();
   });
   if(!$('input-box'))return; // safety: box may have been removed while awaiting
   inputBox.innerHTML=`<button class="vp-discard" id="vp-discard" title="Discard">✕</button>
