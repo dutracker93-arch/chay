@@ -1,3 +1,4 @@
+
 /* ═══════════════════════════════════════════
    NEXUS CHAT — app.js
    ═══════════════════════════════════════════ */
@@ -769,7 +770,7 @@ function renderBubbleContent(m){
 function renderVoiceBubble(content,id){
   const b64=content.slice(7),sid='vp-'+id.replace(/-/g,'');
   return `<div class="voice-msg" data-voice-sid="${sid}">` +
-    `<button class="voice-play-btn" id="${sid}" data-src="${b64}" onclick="playVoice('${sid}')"><img src="play.png" class="vb-img" alt="play"></button>`
+    `<button class="voice-play-btn" id="${sid}" data-src="${b64}" onclick="playVoice('${sid}')">▶</button>` +
     `<div class="voice-seek-wrap">` +
       `<input type="range" class="voice-seek-bar" id="${sid}-seek" min="0" max="100" value="0" step="0.1">` +
       `<div class="voice-times"><span id="${sid}-pos">0:00</span><span id="${sid}-dur">0:00</span></div>` +
