@@ -112,8 +112,7 @@ input,textarea,select{font-family:var(--f)}
 .auth-wrap{display:flex;align-items:center;justify-content:center;height:100vh;background:var(--c-chat);animation:fadeIn .3s ease}
 .auth-box{background:var(--c-sidebar);border-radius:12px;padding:36px;width:390px;max-width:94vw;box-shadow:var(--shadow-float);animation:scaleIn .35s cubic-bezier(.16,1,.3,1)}
 .auth-logo{display:flex;align-items:center;gap:11px;justify-content:center;margin-bottom:26px}
-.auth-logo-icon{width:46px;height:46px;border-radius:12px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:transparent}
-.auth-logo-icon img{width:46px;height:46px;object-fit:contain;display:block}
+.auth-logo-icon{width:46px;height:46px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(88,101,242,.4)}
 .auth-logo-icon svg{width:22px;height:22px;fill:#fff}
 .auth-logo span{font-size:21px;font-weight:700;letter-spacing:-.5px}
 .auth-title{font-size:22px;font-weight:700;text-align:center;margin-bottom:6px}
@@ -237,8 +236,7 @@ input,textarea,select{font-family:var(--f)}
 /* ══ CHAT AREA ══════════════════════════════════════════════ */
 .chat-panel{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--c-chat);transition:background .25s}
 .no-chat{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--t3);animation:fadeIn .4s ease}
-.no-chat-icon{width:72px;height:72px;margin-bottom:6px;animation:popIn .45s var(--ts);overflow:hidden;border-radius:16px}
-.no-chat-icon img{width:100%;height:100%;object-fit:contain;display:block}
+.no-chat-icon{font-size:54px;margin-bottom:6px;animation:popIn .45s var(--ts)}
 .no-chat h2{font-size:19px;font-weight:700;color:var(--t2)}
 .no-chat p{font-size:13px;max-width:260px;text-align:center;line-height:1.7}
 
