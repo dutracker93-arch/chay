@@ -1,4 +1,3 @@
-
 /* ═══════════════════════════════════════════
    NEXUS CHAT — app.js
    ═══════════════════════════════════════════ */
@@ -385,12 +384,7 @@ async function doSetup(){
 /* ════════════════ AUTH ════════════════════════════════════ */
 function showAuth(mode='login'){
   setHTML(`<div class="auth-wrap"><div class="auth-box">
-    <div class="auth-logo">
-      <div class="auth-logo-icon">
-        <img src="app.png" alt="Nexus" class="auth-logo-img">
-      </div>
-      <span>Nexus</span>
-    </div>
+    <div class="auth-logo"><div class="auth-logo-icon"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div><span>Nexus</span></div>
     <div id="auth-body">${mode==='login'?loginForm():signupForm()}</div>
   </div></div>`);
   bindAuth();
@@ -477,8 +471,8 @@ async function loadMessages(fr){
   // Mark as read locally right away so the badge clears immediately
   messages[fr]=messages[fr].map(m=>m.to_user===u&&!m.read?{...m,read:true}:m);
   refreshConvList();
-  // Persist read status to DB (fire-and-forget)
-  SB.from('messages').update({read:true}).eq('to_user',u).eq('from_user',fr).eq('read',false);
+  // Await so read status is guaranteed to persist before returning
+  await SB.from('messages').update({read:true}).eq('to_user',u).eq('from_user',fr).eq('read',false);
 }
 function subscribeRealtime(){
   if(realtimeSub)SB.removeChannel(realtimeSub);
@@ -685,18 +679,7 @@ function renderSettingsPanel(){
   </div>`;
 }
 
-/* ── Empty panel — uses app.png logo ── */
-function renderEmptyPanel(){
-  return `<div class="chat-panel" style="display:flex;align-items:center;justify-content:center">
-    <div class="no-chat">
-      <div class="no-chat-icon">
-        <img src="app.png" alt="Nexus" class="no-chat-logo-img">
-      </div>
-      <h2>Nexus Chat</h2>
-      <p>Select a conversation or add a friend to get started</p>
-    </div>
-  </div>`;
-}
+function renderEmptyPanel(){return `<div class="chat-panel" style="display:flex;align-items:center;justify-content:center"><div class="no-chat"><div class="no-chat-icon">⚡</div><h2>Nexus Chat</h2><p>Select a conversation or add a friend to get started</p></div></div>`;}
 
 function renderChatPanel(){
   const fr=friends.find(f=>f.username===CHAT);if(!fr)return renderEmptyPanel();
